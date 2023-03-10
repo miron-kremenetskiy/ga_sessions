@@ -1,6 +1,15 @@
-/*
-Each event or hit may be associated with nested product-related fields, found in hits.product. Let's suppose we want to know the top product categories (indicated by product.v2ProductCategory) with respect to the total number of unique users who either performed a “Quickview Click”, “Product Click”, or “Promotion Click” action (as indicated by hits.eventInfo.eventAction). We also want to make sure we're analyzing true user-actions (see hits.type) and not page views.
-*/
+with unnest_hits as (
+
+  select
+    ga.fullvisitorid
+    , products.v2ProductCategory as product_category
+    , hits_unnested.eventInfo.eventAction as event_action
+    , hits_unnested.type as hit_type
+  from `bigquery-public-data.google_analytics_sample.ga_sessions_20170801` as ga
+    , unnest(hits) as hits_unnested
+    , unnest(hits_unnested.product) as products
+
+)
 select
   event_action
   , product_category
