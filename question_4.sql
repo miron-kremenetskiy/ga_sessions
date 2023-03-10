@@ -3,6 +3,7 @@ with unnest_hits as (
   select
     md5(cast(ga.fullvisitorid as string) || cast(ga.visitid as string)) as session_id
     , ga.fullvisitorid
+    , md5(cast(ga.fullvisitorid as string) || cast(ga.visitid as string) || cast(hits_unnested.hitnumber as string)) as event_id
     -- Sessions
     , timestamp_seconds(ga.visitStartTime) as visit_start_at
     , ga.totals.timeOnSite as session_length_in_seconds
@@ -10,10 +11,9 @@ with unnest_hits as (
     , timestamp_seconds(cast(ga.visitStartTime + (hits_unnested.time / 1000) as int64)) as hit_at
     , hits_unnested.hitnumber as hit_number
     , hits_unnested.eventInfo.eventAction as event_action
-    , (select experimentId from unnest(hits.experiment)) as experiment_id
     -- Products
-    , (select v2ProductCategory from unnest(hits_unnested.product)) as product_category
-    , (select v2ProductName from unnest(hits_unnested.product)) as product_name
+    , products.v2ProductName as product_name
+    , products.v2ProductCategory as product_category
     -- Transactions
     , ga.totals.transactions as transactions
     , ga.totals.totalTransactionRevenue as transaction_revenue
@@ -24,14 +24,13 @@ with unnest_hits as (
     , trafficSource.isTrueDirect as is_direct
     , trafficSource.source as utm_source
     -- Device
-    -- maybe a type of device is giving people problems and the site needs to be optimized
     , device.browser as device_browser
     , device.deviceCategory as device_category
     -- Geo
-    -- maybe certain locations adandon more, due to demographics like income
     , geoNetwork.metro as geo_metro
   from `bigquery-public-data.google_analytics_sample.ga_sessions*` as ga
     , unnest(hits) as hits_unnested
+    , unnest(hits_unnested.product) as products
 
 ),
 
@@ -54,12 +53,10 @@ aggregated as (
     , geo_metro
     , logical_or(event_action = 'Add to Cart') as has_add_to_cart_action
     , timestamp_diff(min(case when event_action = 'Add to Cart' then hit_at end), visit_start_at, second) as time_to_first_add_to_cart_action_in_seconds
-    , count(*) as events
+    , count(distinct event_id) as events
     , min(case when event_action = 'Add to Cart' then hit_number end) as events_to_first_add_to_cart_action
-     --is an experiment working
-    , logical_or(experiment_id is not null) as has_experiment
-    , array_concat_agg(product_name order by product_name) as products
-    , array_concat_agg(product_category order by product_category) as product_categories
+    , string_agg(distinct product_name order by product_name) as products
+    , string_agg(distinct product_category order by product_category) as product_categories
   from unnest_hits
   group by 1,2,3,4,5,6,7,8,9,10,11,12,13,14
 
@@ -81,9 +78,6 @@ select
   , has_add_to_cart_action
   /* Do more purchases happen on the weekend? */
   , extract(dayofweek from visit_start_at) in (1,7) as is_weekend
-  /*  Does being in an experiment impact purchasing?
-      This can also be expanded to check which experiment. */
-  , has_experiment
   /*  Transaction Info
       Do the number of transactions or total cost predict a purchase? */
   , transactions
@@ -113,8 +107,8 @@ select
   /*  Product Info
       Do the products that are added to the cart impact purchasing?
       Are specific products more likely to get added to the cart but abandoned? */
-  , array_concat_agg(product_name order by product_name) as products
-  , array_concat_agg(product_category order by product_category) as product_categories
+  , products
+  , product_categories
   /*  Geo Info
       Do more purchases or abadoned carts come from anywhere specific?
       This could be a proxy for some demographic information. */
